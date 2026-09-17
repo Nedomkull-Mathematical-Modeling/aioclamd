@@ -190,9 +190,7 @@ class ClamdAsyncClient:
                 f"{self.host}:{self.port}"
             ) from e
 
-    async def instream(
-        self, buffer: BinaryIO, max_size: Optional[int] = None
-    ) -> dict:
+    async def instream(self, buffer: BinaryIO, max_size: Optional[int] = None) -> dict:
         """Scan a buffer
 
         buff (filelikeobj): buffer to scan

@@ -4,6 +4,7 @@ Wraps the call in asyncio.wait_for() explicitly because ClamdAsyncClient's
 own `timeout` constructor argument is currently a no-op (it is stored but
 never applied) -- see the project's security review for details.
 """
+
 import asyncio
 import sys
 
