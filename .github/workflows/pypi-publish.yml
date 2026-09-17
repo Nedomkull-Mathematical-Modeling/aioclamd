@@ -3,21 +3,34 @@ name: Publish to pypi.org
 on:
   release:
     types: [published]
+  push:
+    # Also publish on a version tag push, independent of creating a GitHub
+    # Release. Note: if a Release is published from a `v*` tag, both
+    # triggers fire for that tag -- the second publish attempt will simply
+    # fail (PyPI rejects re-uploading an existing version), which is
+    # harmless but shows up as a failed run.
+    tags:
+      - 'v*'
 
 jobs:
   deploy:
 
     runs-on: ubuntu-latest
 
+    environment:
+      name: pypi
+      url: https://pypi.org/p/aioclamd
+
+    permissions:
+      id-token: write
+
     steps:
     - uses: actions/checkout@v4
     - name: Set up Python
       uses: actions/setup-python@v5
-    - name: Install dependencies
-      run: pipx run poetry install --only main
+    - name: Install build tooling
+      run: pip install build
     - name: Build
-      run: pipx run poetry build
-    - name: Set PyPI token
-      run: pipx run poetry config pypi-token.pypi ${{ secrets.PYPI_TOKEN }}
-    - name: Publish
-      run: pipx run poetry publish
+      run: python -m build
+    - name: Publish to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1

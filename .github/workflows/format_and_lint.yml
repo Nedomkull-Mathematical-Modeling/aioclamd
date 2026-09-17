@@ -15,8 +15,8 @@ jobs:
             -   name: Set up Python
                 uses: actions/setup-python@v5
             -   name: Install development dependencies
-                run: pipx run poetry install --only lint
+                run: pip install -e ".[lint]"
             -   name: Check code formatting with black
-                run: pipx run poetry run black . --check --diff
+                run: black . --check --diff
             -   name: Lint with flake8
-                run: pipx run poetry run flake8 . --count --show-source --statistics
+                run: flake8 . --count --show-source --statistics

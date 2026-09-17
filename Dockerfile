@@ -10,7 +10,7 @@
 FROM python:3.12-slim AS builder
 
 WORKDIR /src
-COPY pyproject.toml poetry.lock README.md CHANGELOG.md LICENSE ./
+COPY pyproject.toml README.md CHANGELOG.md LICENSE ./
 COPY aioclamd ./aioclamd
 
 # aioclamd has zero runtime dependencies (stdlib only); --no-deps keeps that

@@ -1,36 +1,32 @@
-[tool.poetry]
+[project]
 name = "aioclamd"
-version = "1.0.0"
+version = "1.1.0"
 description = "Asynchronous client for virus scanning with ClamAV"
-authors = ["Henrik Blidh <henrik.blidh@nedomkull.com>"]
-homepage = "https://github.com/hbldh/aioclamd"
-repository = "https://github.com/hbldh/aioclamd"
+authors = [{name = "Henrik Blidh", email = "henrik.blidh@nedomkull.com"}]
 readme = "README.md"
 license = "MIT"
-packages = [{include = "aioclamd"}]
-include = ["README.md", "CHANGELOG.md", "LICENSE"]
+requires-python = ">=3.9"
 keywords = ["clamav", "virus", "scanning"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Topic :: Software Development :: Libraries :: Python Modules"
 ]
+dependencies = []
 
-[tool.poetry.dependencies]
-python = "^3.9"
+[project.urls]
+Homepage = "https://github.com/hbldh/aioclamd"
+Repository = "https://github.com/hbldh/aioclamd"
 
-[tool.poetry.group.lint.dependencies]
-black = "^22.8.0"
-flake8 = "^5.0.0"
-
-[tool.poetry.group.test.dependencies]
-pytest = "^7.1.3"
-pytest-asyncio = "^0.19.0"
-pytest-cov = "^3.0.0"
+[project.optional-dependencies]
+lint = ["black>=22.8.0", "flake8>=5.0.0"]
+test = ["pytest>=7.1.3", "pytest-asyncio>=0.19.0", "pytest-cov>=3.0.0"]
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["aioclamd"]

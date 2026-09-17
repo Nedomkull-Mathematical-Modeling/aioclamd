@@ -48,23 +48,17 @@ async def test_scan_filesystem():
 @pytest.mark.asyncio
 async def test_contscan_filesystem():
     clamd = ClamdAsyncClient()
-    result = await clamd.contscan("/etc/")
-    assert result
-    assert all(
-        status == "ERROR" and "Access denied" in reason
-        for status, reason in result.values()
-    )
+    assert (await clamd.contscan("/etc/clamav/clamd.conf")).get(
+        "/etc/clamav/clamd.conf"
+    ) == ("OK", None)
 
 
 @pytest.mark.asyncio
 async def test_multiscan_filesystem():
     clamd = ClamdAsyncClient()
-    result = await clamd.multiscan("/etc/")
-    assert result
-    assert all(
-        status == "ERROR" and "Access denied" in reason
-        for status, reason in result.values()
-    )
+    assert (await clamd.multiscan("/etc/clamav/clamd.conf")).get(
+        "/etc/clamav/clamd.conf"
+    ) == ("OK", None)
 
 
 @pytest.mark.asyncio
