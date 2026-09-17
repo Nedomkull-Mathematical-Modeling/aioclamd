@@ -12,7 +12,7 @@ jobs:
         runs-on: ${{ matrix.os }}
         services:
             clamav:
-                image: clamav/clamav
+                image: clamav/clamav:1.5.4-debian13-slim
                 ports:
                     # Opens tcp port 3310 on the host and service container
                     - 3310:3310

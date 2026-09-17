@@ -62,7 +62,22 @@ asyncio.run(main("127.0.0.1", 3310))
 
 ## Development
 
-A local instance of  [ClamAV](https://www.clamav.net/) can be had with Docker:
+This repo ships a `Dockerfile` that bundles a `clamd` instance together with
+this package itself, for local development and integration testing:
+
+```powershell
+docker build -t aioclamd-dev .
+docker run --rm -p 127.0.0.1:3310:3310 aioclamd-dev
+```
+
+**Only ever publish the port to loopback (`127.0.0.1:3310:3310`), never to
+`0.0.0.0` or a public interface.** clamd's TCP protocol is unauthenticated
+and unencrypted by design (this is documented upstream ClamAV behavior, not
+specific to this image) -- treat it as safe only on loopback or within a
+fully trusted internal network, never across an untrusted network.
+
+Alternatively, if you just want a bare `clamd` without the packaged client,
+the official upstream image works standalone:
 
 ```powershell
 docker run -p 3310:3310 --rm clamav/clamav

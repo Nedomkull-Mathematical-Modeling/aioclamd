@@ -20,12 +20,11 @@ classifiers = [
 ]
 
 [tool.poetry.dependencies]
-python = "^3.7"
+python = "^3.9"
 
 [tool.poetry.group.lint.dependencies]
 black = "^22.8.0"
-flake8 = { version = "^5.0.0", python = ">=3.8" }
-typing-extensions = { version = "^4.2.0", python = "<3.8" }
+flake8 = "^5.0.0"
 
 [tool.poetry.group.test.dependencies]
 pytest = "^7.1.3"

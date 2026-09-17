@@ -1,16 +1,21 @@
 import asyncio
-import pkg_resources
 import re
 import struct
-from typing import Union, BinaryIO
+from importlib.metadata import PackageNotFoundError, version
+from typing import BinaryIO, Optional, Union
 
 try:
-    __version__ = pkg_resources.get_distribution("aioclamd").version
-except:  # noqa
+    __version__ = version("aioclamd")
+except PackageNotFoundError:
     __version__ = ""
+
 scan_response = re.compile(
     r"^(?P<path>.*): ((?P<virus>.+) )?(?P<status>(FOUND|OK|ERROR))$"
 )
+
+# clamd responses are short status lines; this bounds how much a slow or
+# malicious peer can make us buffer before we give up.
+_MAX_RESPONSE_SIZE = 64 * 1024
 
 
 class ClamdError(Exception):
@@ -24,12 +29,17 @@ class ResponseError(ClamdError):
 class BufferTooLongError(ResponseError):
     """
     Class for errors with clamd using INSTREAM with a buffer
-    length > StreamMaxLength in /etc/clamav/clamd.conf
+    length > StreamMaxLength in /etc/clamav/clamd.conf, or exceeding
+    the `max_size` passed to ``instream``.
     """
 
 
 class ClamdConnectionError(ClamdError):
     """Class for errors communication with clamd"""
+
+
+class ConnectionTimeoutError(ClamdConnectionError):
+    """Raised when a call exceeds ClamdAsyncClient's configured `timeout`."""
 
 
 def _parse_response(msg):
@@ -40,6 +50,18 @@ def _parse_response(msg):
         return scan_response.match(msg).group("path", "virus", "status")
     except AttributeError:
         raise ResponseError(msg.rsplit("ERROR", 1)[0])
+
+
+def _check_arg_is_safe(command: str, arg: str) -> None:
+    """
+    clamd's protocol is newline-terminated; an embedded newline or carriage
+    return in a command argument (e.g. a caller-supplied file path) would
+    otherwise inject an additional line into the same session.
+    """
+    if "\n" in arg or "\r" in arg:
+        raise ValueError(
+            f"Argument to {command} must not contain newline characters: {arg!r}"
+        )
 
 
 class _AsyncClamdNetworkSocket:
@@ -112,10 +134,24 @@ class _AsyncClamdNetworkSocket:
         await self.writer.drain()
 
     async def recv_response(self) -> str:
-        """Receive data from clamd"""
+        """Receive data from clamd, bounded to _MAX_RESPONSE_SIZE bytes."""
         try:
-            line = await self.reader.read()
-            return line.decode("utf-8").strip()
+            chunks = []
+            total = 0
+            while True:
+                chunk = await self.reader.read(4096)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > _MAX_RESPONSE_SIZE:
+                    raise ResponseError(
+                        f"Response from {self.host}:{self.port} exceeded the "
+                        f"maximum accepted size of {_MAX_RESPONSE_SIZE} bytes"
+                    )
+                chunks.append(chunk)
+            return b"".join(chunks).decode("utf-8").strip()
+        except ResponseError:
+            raise
         except Exception as e:
             raise ClamdConnectionError("Error while reading from socket") from e
 
@@ -132,47 +168,82 @@ class ClamdAsyncClient:
 
         host (string) : hostname or ip address
         port (int) : TCP port
-        timeout (float or None) : socket timeout
+        timeout (float or None) : overall timeout in seconds for each call
+            (covers connecting, sending and receiving). Raises
+            ConnectionTimeoutError if exceeded. None (default) means no
+            timeout is enforced.
         """
 
         self.host = host
         self.port = port
         self.timeout = timeout
 
-    async def instream(self, buffer: BinaryIO) -> dict:
+    async def _run(self, coro):
+        """Await `coro`, applying self.timeout if one is configured."""
+        if self.timeout is None:
+            return await coro
+        try:
+            return await asyncio.wait_for(coro, timeout=self.timeout)
+        except asyncio.TimeoutError as e:
+            raise ConnectionTimeoutError(
+                f"Timed out after {self.timeout}s communicating with "
+                f"{self.host}:{self.port}"
+            ) from e
+
+    async def instream(
+        self, buffer: BinaryIO, max_size: Optional[int] = None
+    ) -> dict:
         """Scan a buffer
 
         buff (filelikeobj): buffer to scan
+        max_size (int or None): if set, raise BufferTooLongError once more
+            than this many bytes have been read from `buffer`, instead of
+            relying solely on clamd's own StreamMaxLength enforcement.
 
         return:
           - (dict): ``{filename1: ("virusname", "status")}``
 
         May raise :
-          - BufferTooLongError: if the buffer size exceeds clamd limits
+          - BufferTooLongError: if the buffer size exceeds clamd limits or
+            the given max_size
           - ConnectionError: in case of communication problem
+          - ConnectionTimeoutError: if the call exceeds self.timeout
 
         """
-        async with _AsyncClamdNetworkSocket(self.host, self.port) as socket:
-            await socket.send_command("INSTREAM")
 
-            # MUST be < StreamMaxLength in /etc/clamav/clamd.conf
-            chunk_size = 1024
-            chunk = buffer.read(chunk_size)
-            while chunk:
-                size = struct.pack(b"!L", len(chunk))
-                socket.writer.write(size + chunk)
-                chunk = buffer.read(chunk_size)
+        async def _call():
+            async with _AsyncClamdNetworkSocket(self.host, self.port) as socket:
+                await socket.send_command("INSTREAM")
 
-            socket.writer.write(struct.pack(b"!L", 0))
+                # MUST be < StreamMaxLength in /etc/clamav/clamd.conf
+                chunk_size = 1024
+                sent = 0
+                chunk = await asyncio.to_thread(buffer.read, chunk_size)
+                while chunk:
+                    sent += len(chunk)
+                    if max_size is not None and sent > max_size:
+                        raise BufferTooLongError(
+                            f"Buffer exceeded the client-side max_size of "
+                            f"{max_size} bytes"
+                        )
+                    size = struct.pack(b"!L", len(chunk))
+                    socket.writer.write(size + chunk)
+                    await socket.writer.drain()
+                    chunk = await asyncio.to_thread(buffer.read, chunk_size)
 
-            result = await socket.recv_response()
+                socket.writer.write(struct.pack(b"!L", 0))
+                await socket.writer.drain()
 
-            if len(result) > 0:
-                if result == "INSTREAM size limit exceeded. ERROR":
-                    raise BufferTooLongError(result)
+                result = await socket.recv_response()
 
-                filename, reason, status = _parse_response(result)
-                return {filename: (status, reason)}
+                if len(result) > 0:
+                    if result == "INSTREAM size limit exceeded. ERROR":
+                        raise BufferTooLongError(result)
+
+                    filename, reason, status = _parse_response(result)
+                    return {filename: (status, reason)}
+
+        return await self._run(_call())
 
     async def _file_system_scan(self, command, file):
         """Scan a file or directory given by filename using multiple threads
@@ -186,35 +257,53 @@ class ClamdAsyncClient:
                      filename2: ('ERROR', 'reason')}
 
         """
-        async with _AsyncClamdNetworkSocket(self.host, self.port) as socket:
-            await socket.send_command(command, file)
-            dr = {}
-            response = await socket.recv_response()
-            for result in response.split("\n"):
-                if result:
-                    filename, reason, status = _parse_response(result)
-                    dr[filename] = (status, reason)
+        _check_arg_is_safe(command, file)
 
-            return dr
+        async def _call():
+            async with _AsyncClamdNetworkSocket(self.host, self.port) as socket:
+                await socket.send_command(command, file)
+                dr = {}
+                response = await socket.recv_response()
+                for result in response.split("\n"):
+                    if result:
+                        filename, reason, status = _parse_response(result)
+                        dr[filename] = (status, reason)
+
+                return dr
+
+        return await self._run(_call())
 
     # Convenience methods
 
     async def ping(self):
-        async with _AsyncClamdNetworkSocket(self.host, self.port) as socket:
-            return await socket.basic_command("PING")
+        async def _call():
+            async with _AsyncClamdNetworkSocket(self.host, self.port) as socket:
+                return await socket.basic_command("PING")
+
+        return await self._run(_call())
 
     async def version(self):
-        async with _AsyncClamdNetworkSocket(self.host, self.port) as socket:
-            return await socket.basic_command("VERSION")
+        async def _call():
+            async with _AsyncClamdNetworkSocket(self.host, self.port) as socket:
+                return await socket.basic_command("VERSION")
+
+        return await self._run(_call())
 
     async def reload(self):
-        async with _AsyncClamdNetworkSocket(self.host, self.port) as socket:
-            return await socket.basic_command("RELOAD")
+        async def _call():
+            async with _AsyncClamdNetworkSocket(self.host, self.port) as socket:
+                return await socket.basic_command("RELOAD")
+
+        return await self._run(_call())
 
     async def shutdown(self):
         """Force Clamd to shutdown and exit"""
-        async with _AsyncClamdNetworkSocket(self.host, self.port) as socket:
-            return await socket.basic_command("SHUTDOWN")
+
+        async def _call():
+            async with _AsyncClamdNetworkSocket(self.host, self.port) as socket:
+                return await socket.basic_command("SHUTDOWN")
+
+        return await self._run(_call())
 
     async def scan(self, file):
         return await self._file_system_scan("SCAN", file)
